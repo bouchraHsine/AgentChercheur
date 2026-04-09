@@ -1,0 +1,22 @@
+<div class="why-box">
+  {% if evidence and evidence|length %}
+    <div class="why-subtitle">Evidence (from abstract)</div>
+    <ul class="why-evidence">
+      {% for ev in evidence %}
+        <li>
+          <div class="why-ev-title">{{ ev.title }}</div>
+          <div class="why-ev-excerpt">“{{ ev.excerpt }}”</div>
+        </li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+
+  {% if bullets and bullets|length %}
+    <div class="why-subtitle">Why</div>
+    <ul class="why-bullets">
+      {% for b in bullets %}
+        <li>{{ b }}</li>
+      {% endfor %}
+    </ul>
+  {% endif %}
+</div>

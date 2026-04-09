@@ -1,0 +1,528 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1"/>
+  <title>Agent chercheur autonome</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}"/>
+
+  <style>
+    .assist-fab {
+      position: fixed;
+      right: 18px;
+      bottom: 18px;
+      z-index: 9999;
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .assist-fab .btn {
+      border-radius: 14px;
+      padding: 10px 12px;
+    }
+
+    .assist-panel {
+      position: fixed;
+      right: 18px;
+      bottom: 74px;
+      width: min(620px, calc(100vw - 36px));
+      max-height: min(75vh, 620px);
+      z-index: 9999;
+      display: none;
+      overflow: hidden;
+      border-radius: 16px;
+      box-shadow: 0 16px 50px rgba(0,0,0,.25);
+      background: rgba(18,18,20,.88);
+      backdrop-filter: blur(10px);
+      border: 1px solid rgba(255,255,255,.12);
+    }
+    .assist-head {
+      display:flex;
+      align-items:center;
+      justify-content: space-between;
+      padding: 12px 14px;
+      border-bottom: 1px solid rgba(255,255,255,.10);
+    }
+    .assist-title { font-weight: 700; letter-spacing: .2px; }
+    .assist-close {
+      background: transparent;
+      border: none;
+      color: inherit;
+      font-size: 20px;
+      cursor: pointer;
+      padding: 2px 8px;
+    }
+    .assist-body {
+      padding: 12px 14px;
+      overflow: auto;
+      max-height: calc(75vh - 52px);
+    }
+
+    .assist-controls {
+      display:flex;
+      gap:10px;
+      align-items:center;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .assist-controls select, .assist-controls input { max-width: 220px; }
+
+    .assist-meta { font-size: 12px; opacity: .8; margin-bottom: 10px; }
+    .assist-muted { opacity: .85; font-size: 13px; }
+  </style>
+</head>
+
+<body>
+  <div class="bg"></div>
+
+  <div class="page">
+    <div class="wrap">
+      <h1 class="hero-title">Agent chercheur autonome</h1>
+
+      <form class="glass-panel" method="post" action="{{ url_for('run_pipeline') }}">
+        <input type="hidden" name="section" value="{{ section }}"/>
+
+        <div class="row r1">
+          <div class="field">
+            <div class="lbl">Scientific topic</div>
+            <input name="topic" type="text" placeholder="Ex: Autoencoder anomaly detection..."
+                   value="{{ ui.topic }}"/>
+          </div>
+
+          <div class="field">
+            <div class="lbl">Mode</div>
+            <select name="mode">
+              <option {% if ui.mode == "Search only" %}selected{% endif %}>Search only</option>
+              <option {% if ui.mode == "Full pipeline" %}selected{% endif %}>Full pipeline</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <div class="lbl">Final papers</div>
+            <input name="final_papers" type="number" min="1" max="10" value="{{ ui.final_papers }}"/>
+          </div>
+        </div>
+
+        <div class="row r2">
+          <div class="field">
+            <div class="lbl">Required keywords</div>
+            <input name="required_keywords" type="text" placeholder="e.g. LLM, RAG, agents"
+                   value="{{ ui.required_keywords }}"/>
+          </div>
+
+          <label class="chk">
+            <input type="checkbox" name="strict_filter" {% if ui.strict_filter %}checked{% endif %}/>
+            Strict filter
+          </label>
+
+          <label class="chk">
+            <input type="checkbox" name="clear_old_result" {% if ui.clear_old_result %}checked{% endif %}/>
+            clear old result
+          </label>
+
+          <button class="btn-run" type="submit">RUN</button>
+        </div>
+      </form>
+
+      <div class="nav-wrap">
+        {% for s in sections %}
+          <a class="nav-item {% if s == section %}active{% endif %}"
+             href="{{ url_for('index', section=s,
+                              topic=ui.topic, mode=ui.mode, final_papers=ui.final_papers,
+                              required_keywords=ui.required_keywords,
+                              strict_filter='1' if ui.strict_filter else '0',
+                              clear_old_result='1' if ui.clear_old_result else '0') }}">
+            {{ s }}
+          </a>
+        {% endfor %}
+      </div>
+
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <div class="flash">
+            {% for cat, msg in messages %}
+              <div class="flash-item {{ cat }}">{{ msg }}</div>
+            {% endfor %}
+          </div>
+        {% endif %}
+      {% endwith %}
+
+      <div class="content-box">
+        <div class="section-title">{{ section if section != "Article" else "Articles" }}</div>
+
+        <!-- WHY panel -->
+        <div id="whyWrap" class="why-wrap" style="display:none;">
+          <div class="why-head">
+            <div class="why-title">Why</div>
+            <button class="why-close" type="button" onclick="closeWhy()">×</button>
+          </div>
+          <div id="whyBody" class="md-view"></div>
+        </div>
+
+        {% if section == "Article" %}
+          {% set arts = content.articles %}
+          {% if not arts %}
+            <div class="muted">Aucun article. Essayez d’augmenter Final papers ou désactiver Strict filter.</div>
+          {% else %}
+            {% for a in arts %}
+              <div class="paper">
+                <div class="paper-title">{{ loop.index }}. {{ a.title or "(sans titre)" }}</div>
+                <div class="paper-meta">
+                  {% if a.year %}{{ a.year }}{% endif %}
+                  {% if a.authors %} • {{ (a.authors[:3] | join(", ")) }}{% if a.authors|length > 3 %}…{% endif %}{% endif %}
+                </div>
+                <div class="paper-abs">
+                  {% if a.abstract %}{{ a.abstract[:900] }}{% if a.abstract|length > 900 %}…{% endif %}
+                  {% else %}<i>Résumé indisponible.</i>{% endif %}
+                </div>
+
+                <div class="paper-actions">
+                  {% if a.url %}
+                    <a class="btn" href="{{ a.url }}" target="_blank">OpenAlex</a>
+                  {% else %}<span></span>{% endif %}
+
+                  {% if a.oa_url %}
+                    <a class="btn" href="{{ a.oa_url }}" target="_blank">PDF download</a>
+                  {% else %}<span></span>{% endif %}
+
+                  <button class="btn"
+                          type="button"
+                          onclick="onWhyArticle(this)"
+                          data-title="{{ (a.title or '')|e }}"
+                          data-abstract="{{ (a.abstract or '')|e }}">
+                    Why
+                  </button>
+                </div>
+              </div>
+            {% endfor %}
+          {% endif %}
+
+        {% elif section == "Hypothèses" %}
+          <div class="hypo-actions"></div>
+          <div id="hypoList"></div>
+
+        {% else %}
+          <div class="md-view" id="mdRoot">
+            {{ content.html | safe }}
+          </div>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- GLOBAL ASSISTANT -->
+  <div class="assist-fab">
+    <button class="btn" type="button" onclick="assistExplainSelection()">Explain selection</button>
+    <button class="btn" type="button" onclick="assistExplainWord()">Explain word</button>
+    <button class="btn" type="button" onclick="assistClose()" style="display:none;" id="assistCloseBtn">Close</button>
+  </div>
+
+  <div class="assist-panel" id="assistPanel">
+    <div class="assist-head">
+      <div class="assist-title" id="assistTitle">Assistant</div>
+      <button class="assist-close" type="button" onclick="assistClose()">×</button>
+    </div>
+
+    <div class="assist-body">
+      <!-- ✅ Controls shown dynamically depending on action -->
+      <div class="assist-controls" id="assistControls" style="display:none;">
+        <label style="display:flex; gap:8px; align-items:center;">
+          <span style="opacity:.9;">Niveau</span>
+          <select id="assistLevel">
+            <option value="kid">Débutant</option>
+            <option value="master" selected>Master</option>
+            <option value="expert">Expert</option>
+          </select>
+        </label>
+
+        <label style="display:flex; gap:8px; align-items:center;" id="maxTermsWrap">
+          <span style="opacity:.9;">Max terms</span>
+          <input id="assistMaxTerms" type="number" min="3" max="20" value="8" style="width:90px;"/>
+        </label>
+      </div>
+
+      <div class="assist-meta" id="assistMeta"></div>
+      <div id="assistOut" class="md-view"></div>
+      <div class="assist-muted" id="assistHint" style="margin-top:10px;">
+        Tip: sélectionne un mot ou un passage dans la page, puis clique sur un bouton.
+      </div>
+    </div>
+  </div>
+
+<script>
+const CURRENT_SECTION = "{{ section }}";
+
+/* ====================== WHY ====================== */
+function openWhy(html) {
+  const wrap = document.getElementById("whyWrap");
+  const body = document.getElementById("whyBody");
+  body.innerHTML = html;
+  wrap.style.display = "block";
+  wrap.scrollIntoView({behavior:"smooth", block:"start"});
+}
+function closeWhy() {
+  document.getElementById("whyWrap").style.display = "none";
+  document.getElementById("whyBody").innerHTML = "";
+}
+async function askWhy(payload) {
+  const res = await fetch("/api/why", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify(payload)
+  });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || "Why failed");
+  return data.html;
+}
+async function onWhyArticle(btn) {
+  const title = btn.dataset.title || "";
+  const abstract = btn.dataset.abstract || "";
+  const topic = document.querySelector('input[name="topic"]')?.value || "";
+  const old = btn.textContent;
+  try {
+    btn.disabled = true;
+    btn.textContent = "Loading...";
+    const html = await askWhy({kind:"article", topic, title, abstract});
+    openWhy(html);
+  } catch(e) {
+    alert("Why error: " + e.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+}
+
+/* ====================== Hypothèses ====================== */
+async function loadHypothesesButtons() {
+  const topic = document.querySelector('input[name="topic"]')?.value || "";
+  const container = document.getElementById("hypoList");
+  if (!container) return;
+  container.innerHTML = "";
+
+  const res = await fetch("/api/hypotheses");
+  const data = await res.json();
+  if (!data.ok) {
+    container.innerHTML = "<div class='muted'>Impossible de charger les hypothèses.</div>";
+    return;
+  }
+
+  const items = data.items || [];
+  if (items.length === 0) {
+    container.innerHTML = "<div class='muted'>Aucune hypothèse détectée. Lance Full pipeline puis reviens ici.</div>";
+    return;
+  }
+
+  items.forEach((h, idx) => {
+    const row = document.createElement("div");
+    row.className = "hypo-row";
+    row.innerHTML = `
+      <div class="hypo-text">${idx+1}. ${escapeHtml(h)}</div>
+      <button class="btn" type="button">Why</button>
+    `;
+    const b = row.querySelector("button");
+    b.addEventListener("click", async () => {
+      const old = b.textContent;
+      try {
+        b.disabled = true;
+        b.textContent = "Loading...";
+        const html = await askWhy({kind:"hypothesis", topic, hypothesis: h});
+        openWhy(html);
+      } catch(e) {
+        alert("Why error: " + e.message);
+      } finally {
+        b.disabled = false;
+        b.textContent = old;
+      }
+    });
+    container.appendChild(row);
+  });
+}
+function escapeHtml(s) {
+  return (s || "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+document.addEventListener("DOMContentLoaded", () => {
+  if (CURRENT_SECTION === "Hypothèses") loadHypothesesButtons();
+});
+
+/* ====================== ASSISTANT ====================== */
+/**
+ * We keep the last explained text so user can change level
+ * without re-selecting.
+ */
+let LAST_EXPLAIN_TEXT = "";
+let LAST_ACTION = ""; // "explain" | "term" | "terms"
+
+/**
+ * showControls:
+ * - for explain: show level, hide maxTerms
+ * - for term_one: hide all controls
+ * - for terms extraction (optional): show maxTerms
+ */
+function setControlsForAction(action) {
+  const controls = document.getElementById("assistControls");
+  const maxWrap = document.getElementById("maxTermsWrap");
+  const levelSelect = document.getElementById("assistLevel");
+
+  if (action === "explain") {
+    controls.style.display = "flex";
+    maxWrap.style.display = "none";
+    levelSelect.parentElement.style.display = "flex";
+  } else if (action === "terms") {
+    controls.style.display = "flex";
+    maxWrap.style.display = "flex";
+    levelSelect.parentElement.style.display = "none";
+  } else {
+    // term_one (Explain word)
+    controls.style.display = "none";
+  }
+}
+
+function assistOpen(title, meta, action) {
+  document.getElementById("assistTitle").textContent = title || "Assistant";
+  document.getElementById("assistMeta").textContent = meta || "";
+  document.getElementById("assistOut").innerHTML = "<div class='assist-muted'>Loading...</div>";
+  document.getElementById("assistPanel").style.display = "block";
+  document.getElementById("assistCloseBtn").style.display = "inline-block";
+
+  LAST_ACTION = action || "";
+  setControlsForAction(LAST_ACTION);
+}
+
+function assistClose() {
+  document.getElementById("assistPanel").style.display = "none";
+  document.getElementById("assistOut").innerHTML = "";
+  document.getElementById("assistMeta").textContent = "";
+  document.getElementById("assistCloseBtn").style.display = "none";
+  LAST_ACTION = "";
+}
+
+function getSelectedText() {
+  const sel = window.getSelection ? window.getSelection().toString() : "";
+  return (sel || "").trim();
+}
+function getSelectedWordOrFallback() {
+  let s = getSelectedText();
+  if (!s) return "";
+  s = s.replace(/\s+/g, " ").trim();
+  const parts = s.split(" ");
+  if (parts.length <= 3) return s;
+  return parts[0];
+}
+
+/* --- API --- */
+async function apiExplain(text, level) {
+  const res = await fetch("/api/explain", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ text, level })
+  });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || "Explain failed");
+  return data.html;
+}
+async function apiTermOne(term, context) {
+  const res = await fetch("/api/term_one", {
+    method: "POST",
+    headers: {"Content-Type":"application/json"},
+    body: JSON.stringify({ term, context })
+  });
+  const data = await res.json();
+  if (!data.ok) throw new Error(data.error || "Term explain failed");
+  return data.html;
+}
+
+/* Explain selection */
+async function assistExplainSelection() {
+  const selected = getSelectedText();
+  if (!selected) {
+    alert("Sélectionne d'abord un passage dans la page.");
+    return;
+  }
+  LAST_EXPLAIN_TEXT = selected;
+
+  const level = document.getElementById("assistLevel")?.value || "master";
+  assistOpen("Explain", `chars: ${selected.length}`, "explain");
+
+  try {
+    const html = await apiExplain(selected, level);
+    document.getElementById("assistOut").innerHTML = html;
+  } catch (e) {
+    document.getElementById("assistOut").innerHTML =
+      "<div class='assist-muted'>Error: " + escapeHtml(e.message) + "</div>";
+  }
+}
+
+/* Explain word (single term only) */
+async function assistExplainWord() {
+  const w = getSelectedWordOrFallback();
+  if (!w) {
+    alert("Sélectionne d'abord un mot (ou 2-3 mots).");
+    return;
+  }
+
+  const ctx = getContextAroundSelection(900);
+  assistOpen("Terminology", `term: "${w}"`, "term");
+
+  try {
+    const html = await apiTermOne(w, ctx);
+    document.getElementById("assistOut").innerHTML = html;
+  } catch (e) {
+    document.getElementById("assistOut").innerHTML =
+      "<div class='assist-muted'>Error: " + escapeHtml(e.message) + "</div>";
+  }
+}
+
+/* ✅ When user changes level: re-run explain using LAST_EXPLAIN_TEXT */
+document.addEventListener("DOMContentLoaded", () => {
+  const levelSelect = document.getElementById("assistLevel");
+  if (levelSelect) {
+    levelSelect.addEventListener("change", async () => {
+      if (LAST_ACTION !== "explain") return;
+      if (!LAST_EXPLAIN_TEXT) return;
+
+      const level = levelSelect.value || "master";
+      document.getElementById("assistMeta").textContent = `chars: ${LAST_EXPLAIN_TEXT.length}`;
+      document.getElementById("assistOut").innerHTML = "<div class='assist-muted'>Loading...</div>";
+
+      try {
+        const html = await apiExplain(LAST_EXPLAIN_TEXT, level);
+        document.getElementById("assistOut").innerHTML = html;
+      } catch (e) {
+        document.getElementById("assistOut").innerHTML =
+          "<div class='assist-muted'>Error: " + escapeHtml(e.message) + "</div>";
+      }
+    });
+  }
+});
+
+/* Context helper */
+function getContextAroundSelection(maxChars) {
+  try {
+    const sel = window.getSelection();
+    if (!sel || sel.rangeCount === 0) return "";
+    const range = sel.getRangeAt(0);
+    let node = range.commonAncestorContainer;
+    if (!node) return "";
+    if (node.nodeType === Node.TEXT_NODE) node = node.parentNode;
+
+    let el = node;
+    for (let i = 0; i < 6 && el; i++) {
+      if (el.tagName && ["P","DIV","LI","TD","SECTION","ARTICLE"].includes(el.tagName)) break;
+      el = el.parentNode;
+    }
+    if (!el) return "";
+    const txt = (el.innerText || el.textContent || "").replace(/\s+/g," ").trim();
+    return txt.slice(0, maxChars || 900);
+  } catch(e) {
+    return "";
+  }
+}
+</script>
+</body>
+</html>
