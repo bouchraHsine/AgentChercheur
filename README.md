@@ -6,6 +6,3 @@
   Votre navigateur ne supporte pas la vidéo.
 </video>
 
-### Code principal
-```python
-# Ton code principal ici
